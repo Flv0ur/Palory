@@ -354,11 +354,21 @@ function App() {
     return `Due ${readable}`
   }
 
+  const parseLocalDateString = (value) => {
+    if (!value) return null
+    // Handles yyyy-mm-dd without timezone shift
+    const parts = value.split('-').map(Number)
+    if (parts.length === 3 && !parts.some(Number.isNaN)) {
+      const [year, month, day] = parts
+      return new Date(year, month - 1, day)
+    }
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+
   const getTaskDate = (task) => {
     const dateString = task.recommendedDate || task.deadline || task.createdAt
-    if (!dateString) return null
-    const date = new Date(dateString)
-    return Number.isNaN(date.getTime()) ? null : date
+    return parseLocalDateString(dateString)
   }
 
   const isSameDay = (a, b) =>
@@ -1093,7 +1103,7 @@ const renderChecked = () => (
           ? formatWeekLabel(getStartOfWeek(anchor))
           : formatDayLabel(anchor)
 
-    const renderTaskCard = (task) => {
+    const renderTaskCard = (task, { tooltipPosition = 'side' } = {}) => {
       const category = categories.find((cat) => cat.id === task.categoryId)
       const accent = category?.color ?? '#cbd5e1'
       return (
@@ -1103,6 +1113,8 @@ const renderChecked = () => (
             event.preventDefault()
             openContextMenu(event, { type: 'task', id: task.id })
           }}
+          onMouseEnter={() => setTooltipTaskId(task.id)}
+          onMouseLeave={() => setTooltipTaskId(null)}
           className="group relative flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-sm shadow-sm ring-1 ring-slate-100"
           style={{ borderLeft: `6px solid ${accent}` }}
         >
@@ -1114,31 +1126,21 @@ const renderChecked = () => (
           >
             {task.title}
           </p>
-          {task.notes && (
-            <>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setTooltipTaskId((current) => (current === task.id ? null : task.id))
-                }}
-                className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600 transition hover:bg-slate-100"
-              >
-                More
-              </button>
-              <div
-                className={`absolute left-0 top-full z-20 mt-1 w-64 rounded-xl bg-slate-900 px-3 py-2 text-xs text-white shadow-lg ring-1 ring-slate-900/10 transition-opacity ${
-                  tooltipTaskId === task.id
-                    ? 'opacity-100 pointer-events-auto'
-                    : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100'
-                }`}
-              >
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-200">
-                  Details
-                </p>
-                <p className="text-[12px] leading-snug text-white/90">{task.notes}</p>
-              </div>
-            </>
+          {task.notes && tooltipPosition !== 'modal' && (
+            <div
+              className={`pointer-events-none absolute z-20 w-64 rounded-xl bg-slate-900 px-3 py-2 text-xs text-white shadow-lg ring-1 ring-slate-900/10 transition-opacity ${
+                tooltipTaskId === task.id ? 'opacity-100' : 'opacity-0'
+              } ${
+                tooltipPosition === 'below'
+                  ? 'left-0 top-full mt-1'
+                  : 'left-full top-1/2 ml-2 -translate-y-1/2'
+              }`}
+            >
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-200">
+                Details
+              </p>
+              <p className="text-[12px] leading-snug text-white/90">{task.notes}</p>
+            </div>
           )}
         </div>
       )
@@ -1197,7 +1199,7 @@ const renderChecked = () => (
               </div>
             ) : (
               <div className="space-y-1">
-                {dayTasks.map((task) => renderTaskCard(task))}
+                {dayTasks.map((task) => renderTaskCard(task, { tooltipPosition: 'below' }))}
               </div>
             )}
           </section>
@@ -1280,7 +1282,7 @@ const renderChecked = () => (
                         Empty
                       </div>
                     ) : (
-                      day.tasks.map((task) => renderTaskCard(task))
+                      day.tasks.map((task) => renderTaskCard(task, { tooltipPosition: 'modal' }))
                     )}
                   </div>
                 </div>
@@ -1365,7 +1367,7 @@ const renderChecked = () => (
                         Empty
                       </div>
                     ) : (
-                      day.tasks.map((task) => renderTaskCard(task))
+                      day.tasks.map((task) => renderTaskCard(task, { tooltipPosition: 'modal' }))
                     )}
                   </div>
                 </div>

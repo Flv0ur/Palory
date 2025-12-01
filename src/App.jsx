@@ -67,6 +67,8 @@ function App() {
   const [newCategory, setNewCategory] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState(palette[1])
   const [activeTab, setActiveTab] = useState('home')
+  const [calendarView, setCalendarView] = useState('daily')
+  const [calendarCursor, setCalendarCursor] = useState(() => new Date())
   const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0, target: null })
   const [editingTaskId, setEditingTaskId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
@@ -74,6 +76,7 @@ function App() {
   const [editingCategoryId, setEditingCategoryId] = useState(null)
   const [categoryDraft, setCategoryDraft] = useState({ name: '', color: palette[0] })
   const boardRef = useRef(null)
+  const [tooltipTaskId, setTooltipTaskId] = useState(null)
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') return
@@ -125,7 +128,10 @@ function App() {
   }, [categories, tasks])
 
   useEffect(() => {
-    const close = () => setContextMenu({ open: false, x: 0, y: 0, target: null })
+    const close = () => {
+      setContextMenu({ open: false, x: 0, y: 0, target: null })
+      setTooltipTaskId(null)
+    }
     const onEsc = (event) => {
       if (event.key === 'Escape') close()
     }
@@ -256,6 +262,10 @@ function App() {
   }
 
   const toggleCompleted = (taskId) => {
+    if (editingTaskId === taskId) {
+      setEditingTaskId(null)
+      setEditDraft(null)
+    }
     setTasks((current) =>
       current.map((task) =>
         task.id === taskId ? { ...task, completed: !task.completed } : task
@@ -267,6 +277,10 @@ function App() {
   const deleteTask = (taskId) => {
     setTasks((current) => current.filter((task) => task.id !== taskId))
     setContextMenu({ open: false, x: 0, y: 0, target: null })
+    if (editingTaskId === taskId) {
+      setEditingTaskId(null)
+      setEditDraft(null)
+    }
   }
 
   const deleteCategory = (categoryId) => {
@@ -330,7 +344,7 @@ function App() {
     if (diffDays === -1) return 'Due yesterday'
     if (diffDays === -2) return 'Due 2 days ago'
 
-    const readable = date.toLocaleDateString(undefined, {
+    const readable = target.toLocaleDateString(undefined, {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -338,6 +352,61 @@ function App() {
     })
     if (diffDays > 2) return `Due ${readable}`
     return `Due ${readable}`
+  }
+
+  const getTaskDate = (task) => {
+    const dateString = task.recommendedDate || task.deadline || task.createdAt
+    if (!dateString) return null
+    const date = new Date(dateString)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+
+  const isSameDay = (a, b) =>
+    a &&
+    b &&
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+
+  const getStartOfWeek = (date) => {
+    const dayOfWeek = date.getDay()
+    const diff = (dayOfWeek + 6) % 7
+    const start = new Date(date)
+    start.setDate(date.getDate() - diff)
+    start.setHours(0, 0, 0, 0)
+    return start
+  }
+
+  const formatDayLabel = (date) =>
+    date.toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })
+
+  const formatWeekLabel = (start) => {
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return `Week of ${startLabel} – ${endLabel}`
+  }
+
+  const formatMonthLabel = (date) =>
+    date.toLocaleDateString(undefined, {
+      month: 'long',
+      year: 'numeric',
+    })
+
+  const shiftCalendarCursor = (view, delta) => {
+    setCalendarCursor((current) => {
+      const next = new Date(current)
+      if (view === 'daily') next.setDate(current.getDate() + delta)
+      else if (view === 'weekly') next.setDate(current.getDate() + delta * 7)
+      else next.setMonth(current.getMonth() + delta)
+      return next
+    })
   }
 
   const activeTasks = tasks.filter((task) => !task.completed)
@@ -1014,7 +1083,306 @@ const renderChecked = () => (
     </div>
   )
 
+  const renderCalendar = () => {
+    const view = calendarView
+    const anchor = calendarCursor
+    const label =
+      view === 'monthly'
+        ? formatMonthLabel(anchor)
+        : view === 'weekly'
+          ? formatWeekLabel(getStartOfWeek(anchor))
+          : formatDayLabel(anchor)
+
+    const renderTaskCard = (task) => {
+      const category = categories.find((cat) => cat.id === task.categoryId)
+      const accent = category?.color ?? '#cbd5e1'
+      return (
+        <div
+          key={task.id}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            openContextMenu(event, { type: 'task', id: task.id })
+          }}
+          className="group relative flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-sm shadow-sm ring-1 ring-slate-100"
+          style={{ borderLeft: `6px solid ${accent}` }}
+        >
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: accent }} />
+          <p
+            className={`truncate text-sm font-semibold ${
+              task.completed ? 'text-slate-500 line-through' : 'text-slate-900'
+            }`}
+          >
+            {task.title}
+          </p>
+          {task.notes && (
+            <>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setTooltipTaskId((current) => (current === task.id ? null : task.id))
+                }}
+                className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600 transition hover:bg-slate-100"
+              >
+                More
+              </button>
+              <div
+                className={`absolute left-0 top-full z-20 mt-1 w-64 rounded-xl bg-slate-900 px-3 py-2 text-xs text-white shadow-lg ring-1 ring-slate-900/10 transition-opacity ${
+                  tooltipTaskId === task.id
+                    ? 'opacity-100 pointer-events-auto'
+                    : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100'
+                }`}
+              >
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-200">
+                  Details
+                </p>
+                <p className="text-[12px] leading-snug text-white/90">{task.notes}</p>
+              </div>
+            </>
+          )}
+        </div>
+      )
+    }
+
+    const renderDayView = () => {
+      const dayTasks = tasks.filter((task) => isSameDay(getTaskDate(task), anchor))
+
+      return (
+        <div className="flex h-full w-full overflow-y-auto px-6 pb-8 pt-16">
+          <section className="flex w-full flex-col rounded-3xl bg-white p-4 text-slate-900 shadow-sm ring-1 ring-slate-100">
+            <div className="mb-3 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Calendar</p>
+                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, -1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+                    {label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, 1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    Next ›
+                  </button>
+                </div>
+              </div>
+              <div className="flex w-fit items-center gap-2 rounded-full bg-slate-100 p-1">
+                {['daily', 'weekly', 'monthly'].map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setCalendarView(mode)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest transition ${
+                      view === mode
+                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                        : 'text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {dayTasks.length === 0 ? (
+              <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-sm font-medium text-slate-500">
+                No tasks on this day yet.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {dayTasks.map((task) => renderTaskCard(task))}
+              </div>
+            )}
+          </section>
+        </div>
+      )
+    }
+
+    const renderWeekView = () => {
+      const start = getStartOfWeek(anchor)
+      const days = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(start)
+        date.setDate(start.getDate() + index)
+        return {
+          date,
+          tasks: tasks.filter((task) => isSameDay(getTaskDate(task), date)),
+        }
+      })
+
+      return (
+        <div className="flex h-full w-full overflow-y-auto px-6 pb-8 pt-16">
+          <section className="flex w-full flex-col rounded-3xl bg-white p-4 text-slate-900 shadow-sm ring-1 ring-slate-100">
+            <div className="mb-3 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Calendar</p>
+                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, -1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+                    {label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, 1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    Next ›
+                  </button>
+                </div>
+              </div>
+              <div className="flex w-fit items-center gap-2 rounded-full bg-slate-100 p-1">
+                {['daily', 'weekly', 'monthly'].map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setCalendarView(mode)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest transition ${
+                      view === mode
+                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                        : 'text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+              {days.map((day) => (
+                <div
+                  key={day.date.toISOString()}
+                  className="flex min-h-[220px] flex-col rounded-2xl border border-slate-100 bg-slate-50 p-3 shadow-sm"
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-900">
+                      {day.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </p>
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                      {day.tasks.length} task{day.tasks.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="flex-1 space-y-1 overflow-y-auto">
+                    {day.tasks.length === 0 ? (
+                      <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 px-2 py-4 text-[11px] font-medium text-slate-400">
+                        Empty
+                      </div>
+                    ) : (
+                      day.tasks.map((task) => renderTaskCard(task))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )
+    }
+
+    const renderMonthView = () => {
+      const year = anchor.getFullYear()
+      const month = anchor.getMonth()
+      const daysInMonth = new Date(year, month + 1, 0).getDate()
+      const days = Array.from({ length: daysInMonth }, (_, index) => {
+        const date = new Date(year, month, index + 1)
+        return {
+          date,
+          tasks: tasks.filter((task) => isSameDay(getTaskDate(task), date)),
+        }
+      })
+
+      return (
+        <div className="flex h-full w-full overflow-y-auto px-6 pb-8 pt-16">
+          <section className="flex w-full flex-col rounded-3xl bg-white p-4 text-slate-900 shadow-sm ring-1 ring-slate-100">
+            <div className="mb-3 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Calendar</p>
+                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, -1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+                    {label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarCursor(view, 1)}
+                    className="rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-widest text-slate-700 hover:bg-white"
+                  >
+                    Next ›
+                  </button>
+                </div>
+              </div>
+              <div className="flex w-fit items-center gap-2 rounded-full bg-slate-100 p-1">
+                {['daily', 'weekly', 'monthly'].map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setCalendarView(mode)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest transition ${
+                      view === mode
+                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                        : 'text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {days.map((day) => (
+                <div
+                  key={day.date.toISOString()}
+                  className="flex min-h-[200px] flex-col rounded-2xl border border-slate-100 bg-slate-50 p-3 shadow-sm"
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-900">{day.date.getDate()}</p>
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                      {day.tasks.length} task{day.tasks.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="flex-1 space-y-1 overflow-y-auto">
+                    {day.tasks.length === 0 ? (
+                      <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 px-2 py-4 text-[11px] font-medium text-slate-400">
+                        Empty
+                      </div>
+                    ) : (
+                      day.tasks.map((task) => renderTaskCard(task))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )
+    }
+
+    if (view === 'daily') return renderDayView()
+    if (view === 'weekly') return renderWeekView()
+    return renderMonthView()
+  }
+
   const renderTab = () => {
+    if (activeTab === 'calendar') return renderCalendar()
     if (activeTab === 'all') return renderAllTasks()
     if (activeTab === 'checked') return renderChecked()
     return renderHome()
@@ -1076,6 +1444,21 @@ const renderChecked = () => (
               >
                 All tasks
                 <span className="h-2 w-2 rounded-full bg-slate-900 transition group-hover:scale-110" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('calendar')
+                  setNavOpen(false)
+                }}
+                className={`group flex min-w-[130px] items-center justify-between gap-3 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-widest shadow-sm ring-1 transition hover:-translate-x-1 hover:shadow-md ${
+                  activeTab === 'calendar'
+                    ? 'bg-white text-slate-900 ring-slate-200'
+                    : 'bg-white/80 text-slate-700 ring-slate-200'
+                }`}
+              >
+                Calendar
+                <span className="h-2 w-2 rounded-full bg-sky-400 transition group-hover:scale-110" />
               </button>
               <button
                 type="button"
@@ -1144,6 +1527,104 @@ const renderChecked = () => (
                 <button
                   type="button"
                   onClick={saveCategoryEdit}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'calendar' && editingTaskId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  Edit task
+                </p>
+                <p className="text-lg font-semibold text-slate-900">Update task details</p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-3">
+              <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                Title
+                <input
+                  type="text"
+                  name="title"
+                  value={editDraft?.title ?? ''}
+                  onChange={handleEditChange}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                Notes
+                <textarea
+                  name="notes"
+                  value={editDraft?.notes ?? ''}
+                  onChange={handleEditChange}
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                  Action date
+                  <input
+                    type="date"
+                    name="recommendedDate"
+                    value={editDraft?.recommendedDate ?? ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                  Deadline
+                  <input
+                    type="date"
+                    name="deadline"
+                    value={editDraft?.deadline ?? ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                </label>
+              </div>
+              <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                Category
+                <select
+                  name="categoryId"
+                  value={editDraft?.categoryId ?? ''}
+                  onChange={handleEditChange}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                >
+                  <option value="">No category</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEdit}
                   className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
                 >
                   Save
